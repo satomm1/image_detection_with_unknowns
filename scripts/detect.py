@@ -16,18 +16,13 @@ import cv2
 import time
 
 IOU_THRESHOLD = 0.1  # Set the IoU threshold for NMS
-OBJECT_CONFIDENCE_THRESHOLD = 0.7
-OTHER_CONFIDENCE_THRESHOLD = 0.03
-COLORS = ['red', 'green', 'blue', 'purple', 'pink', 'orange', 'yellow']
-COLOR_CODES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 0, 128), (255, 192, 203), (255, 165, 0), (255, 255, 0)]
-
 
 class Detector:
     
     def __init__(self):
         weights_file = rospy.get_param('~weights_file', '../weights/osod.pt')
         self.model = YOLO(weights_file)
-        labels_file = rospy.get_param('~coco_labels_file', 'labels.txt')
+        labels_file = rospy.get_param('~labels_file', 'labels.txt')
         with open(labels_file, 'r') as f:
             self.labels = f.read().splitlines()
         print("Using model " + weights_file)
@@ -55,7 +50,7 @@ class Detector:
             image = cv2.rotate(image, cv2.ROTATE_180)
 
         # Perform object detection
-        results = self.model.predict(image, device=0, conf=0.03, agnostic_nms=True, iou=IOU_THRESHOLD, verbose=False)
+        results = self.model.predict(image, device=0, conf=0.20, agnostic_nms=True, iou=IOU_THRESHOLD, verbose=False)
 
         detect_time = time.time()
         

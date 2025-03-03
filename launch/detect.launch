@@ -2,10 +2,12 @@
 <launch>
 
   <arg name="weights_file" default="$(find image_detection_with_unknowns)/weights/osod.pt"/>
+  <arg name="labels_file" default="$(find image_detection_with_unknowns)/scripts/labels.txt"/>
 
   <!-- Launch the object detection script -->
   <node name="image_detector_node" pkg="image_detection_with_unknowns" type="detect.py" output="log">
     <param name="weights_file" value="$(arg weights_file)" />
+    <param name="labels_file" value="$(arg labels_file)" />
   </node>
 
 </launch>
