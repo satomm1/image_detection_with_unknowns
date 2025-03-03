@@ -76,3 +76,13 @@ class Detector:
         end_time = time.time()
         print('Detection time: {}'.format(detect_time - start_time))
         print('Elapsed time: {}'.format(end_time - start_time))
+
+    def run(self):
+        rospy.spin()
+
+if __name__ == '__main__':
+
+    rospy.init_node('object_detection', anonymous=True)
+
+    detector = Detector()
+    detector.run()
