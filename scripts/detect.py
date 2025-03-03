@@ -15,7 +15,12 @@ import numpy as np
 import cv2
 import time
 
+KNOWN_OBJECT_THRESHOLD = 0.4
+UNKNOWN_OBJECT_THRESHOLD = 0.1
+
 IOU_THRESHOLD = 0.1  # Set the IoU threshold for NMS
+COLORS = [(255,50,50), (207,49,225), (114,15,191), (22,0,222), (0,177,122), (34,236,169),
+          (34,236,81), (203,203,47), (205,90,23), (102,68,16), (168,215,141)]
 
 class Detector:
     
@@ -55,8 +60,23 @@ class Detector:
         detect_time = time.time()
         
         # Draw the bounding boxes
-        image_with_boxes = results[0].plot()
-        num_detected = len(results[0].boxes.cls)
+        # image_with_boxes = results[0].plot()
+        boxes = results[0].boxes.xyxy.cpu().numpy()
+        conf = results[0].boxes.conf.cpu().numpy()
+        cls = results[0].boxes.cls.cpu().numpy().astype(int)
+        num_detected = len(cls)
+
+        image_with_boxes = image.copy()
+        for i in range(num_detected):
+            if cls[i] == 0 and conf[i] < UNKNOWN_OBJECT_THRESHOLD:
+                continue
+            elif cls[i] != 0 and conf[i] < KNOWN_OBJECT_THRESHOLD:
+                continue
+
+            box = boxes[i]
+            x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+            cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[cls[i]], 2)
+            cv2.putText(image_with_boxes, f"{self.labels[cls[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[cls[i]], 2)
 
         # Create the ROS Image and publish it
         image_msg = Image()
@@ -69,8 +89,8 @@ class Detector:
         self.boxes_publisher.publish(image_msg)
 
         end_time = time.time()
-        print('Detection time: {}'.format(detect_time - start_time))
-        print('Elapsed time: {}'.format(end_time - start_time))
+        # print('Detection time: {}'.format(detect_time - start_time))
+        # print('Elapsed time: {}'.format(end_time - start_time))
 
     def run(self):
         rospy.spin()
