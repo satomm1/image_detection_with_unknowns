@@ -34,7 +34,7 @@ class GeminiBridge:
         if self.done:
             return
         
-        object_array = DetectedObjectArray()
+        
 
         # Save obj.data as an image
         np_arr = np.frombuffer(msg.data, np.uint8)
@@ -46,13 +46,32 @@ class GeminiBridge:
 
         data = {'query': QUERY, 'query_type': 'image', 'image_name': "unknown_object.jpg"}
         response = requests.post(self.server, json=data)
-        # result = response.json()
-        # print(result['response'])
+        response = response.json()['response']
+        response = json.loads(response)
 
-        # for obj in msg.objects:
-            
+        results = {}
+        for obj in response:
+            results[obj['bounding_box_color']] = obj['object_name']
 
-            
+        # Match the results with the objects
+        matched_object_array = DetectedObjectArray()
+
+        for obj in msg.objects:
+            if obj.color in results:
+                matched_object = DetectedObject()
+                matched_object.class_name = results[obj.color]
+                matched_object.pose = obj.pose
+                matched_object.width = obj.width
+                matched_object.x1 = obj.x1
+                matched_object.x2 = obj.x2
+                matched_object.y1 = obj.y1
+                matched_object.y2 = obj.y2
+                matched_object_array.objects.append(matched_object)
+
+
+
+        if len(matched_object_array.objects) > 0:
+            self.labeled_pub.publish(matched_object_array)                    
             
 
         # TODO Publish identified objects
