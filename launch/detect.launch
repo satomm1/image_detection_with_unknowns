@@ -10,4 +10,8 @@
     <param name="labels_file" value="$(arg labels_file)" />
   </node>
 
+  <!-- Launch the gemini bridge -->
+  <node name="gemini_bridge" pkg="image_detection_with_unknowns" type="gemini_bridge.py" output="screen" />
+
+
 </launch>

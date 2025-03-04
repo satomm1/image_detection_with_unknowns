@@ -22,6 +22,9 @@ IOU_THRESHOLD = 0.1  # Set the IoU threshold for NMS
 COLORS = [(255,50,50), (207,49,225), (114,15,191), (22,0,222), (0,177,122), (34,236,169),
           (34,236,81), (203,203,47), (205,90,23), (102,68,16), (168,215,141)]
 
+GEMINI_COLORS = ['red', 'green', 'blue', 'purple', 'pink', 'orange', 'yellow']
+COLOR_CODES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 0, 128), (255, 192, 203), (255, 165, 0), (255, 255, 0)]
+
 class Detector:
     
     def __init__(self):
@@ -37,6 +40,7 @@ class Detector:
 
         # Create the publisher that will show image with bounding boxes
         self.boxes_publisher = rospy.Publisher('/camera/color/image_with_boxes', Image, queue_size=1)
+        self.unknown_pub = rospy.Publisher('/unknown_objects', DetectedObjectWithImageArray, queue_size=1)
 
         self.rbg_sub = message_filters.Subscriber('/camera/color/image_raw', Image)
         self.depth_sub = message_filters.Subscriber('/camera/depth/image_raw', Image)
@@ -60,13 +64,18 @@ class Detector:
         detect_time = time.time()
         
         # Draw the bounding boxes
-        # image_with_boxes = results[0].plot()
         boxes = results[0].boxes.xyxy.cpu().numpy()
         conf = results[0].boxes.conf.cpu().numpy()
         cls = results[0].boxes.cls.cpu().numpy().astype(int)
         num_detected = len(cls)
 
+        unknown_object_array = DetectedObjectWithImageArray()
+        unknown_object_array.header.stamp = rospy.Time.now()
+        unknown_object_array.header.frame_id = 'map'
+        unknown_object_array.objects = []
+
         image_with_boxes = image.copy()
+        image_with_unknown_boxes = image.copy()
         for i in range(num_detected):
             if cls[i] == 0 and conf[i] < UNKNOWN_OBJECT_THRESHOLD:
                 continue
@@ -78,6 +87,14 @@ class Detector:
             cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[cls[i]], 2)
             cv2.putText(image_with_boxes, f"{self.labels[cls[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[cls[i]], 2)
 
+            if cls[i] == 0 and len(unknown_object_array.objects) < len(GEMINI_COLORS):
+                unknown_object = DetectedObjectWithImage()
+                unknown_object.class_name = "unknown"
+                unknown_object.probability = conf[i]
+                unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
+                cv2.rectangle(image_with_unknown_boxes, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)], 2)
+                unknown_object_array.objects.append(unknown_object)
+
         # Create the ROS Image and publish it
         image_msg = Image()
         image_msg.data = image_with_boxes.tobytes()
@@ -87,6 +104,15 @@ class Detector:
         image_msg.step = 3 * image_with_boxes.shape[1]
         image_msg.header.stamp = rospy.Time.now()
         self.boxes_publisher.publish(image_msg)
+
+        # Publish the unknown objects
+        if len(unknown_object_array.objects) > 0:
+            unknown_object_array.header.stamp = rospy.Time.now()
+            unknown_object_array.header.frame_id = 'map'
+            # unknown_object_array.data = image_with_unknown_boxes.tobytes()
+            _, buffer = cv2.imencode('.jpg', image_with_unknown_boxes)
+            unknown_object_array.data = np.array(buffer).tobytes()
+            self.unknown_pub.publish(unknown_object_array)
 
         end_time = time.time()
         # print('Detection time: {}'.format(detect_time - start_time))
