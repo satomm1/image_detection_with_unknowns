@@ -48,8 +48,11 @@ COLOR_CODES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 0, 128), (255, 192, 
 class Detector:
     
     def __init__(self):
+        # Load the YOLO detector model
         weights_file = rospy.get_param('~weights_file', '../weights/osod.pt')
         self.model = YOLO(weights_file)
+
+        # Get the corresponding labels for the classes
         labels_file = rospy.get_param('~labels_file', 'labels.txt')
         with open(labels_file, 'r') as f:
             self.labels = f.read().splitlines()
@@ -89,8 +92,8 @@ class Detector:
         # Get the bounding boxes, confidence, and class labels
         boxes = results[0].boxes.xyxy.cpu().numpy()
         conf = results[0].boxes.conf.cpu().numpy()
-        cls = results[0].boxes.cls.cpu().numpy().astype(int)
-        num_detected = len(cls)
+        clss = results[0].boxes.cls.cpu().numpy().astype(int)
+        num_detected = len(clss)
 
         # Create the DetectedObjectImageArray message for storing unknown objects
         unknown_object_array = DetectedObjectWithImageArray()
@@ -103,20 +106,19 @@ class Detector:
         for i in range(num_detected):
 
             # Make sure the confidence is above the threshold
-            if cls[i] == 0 and conf[i] < UNKNOWN_OBJECT_THRESHOLD:
+            if clss[i] == 0 and conf[i] < UNKNOWN_OBJECT_THRESHOLD:
                 continue
-            elif cls[i] != 0 and conf[i] < KNOWN_OBJECT_THRESHOLD:
+            elif clss[i] != 0 and conf[i] < KNOWN_OBJECT_THRESHOLD:
                 continue
 
+            # Draw box and label on the image
             box = boxes[i]
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-
-            # Draw box and label
-            cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[cls[i]], 2)
-            cv2.putText(image_with_boxes, f"{self.labels[cls[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[cls[i]], 2)
+            cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[clss[i]], 2)
+            cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
             # If the object is unknown, add it to the unknown_object_array and draw on unknown image
-            if cls[i] == 0 and len(unknown_object_array.objects) < len(GEMINI_COLORS):
+            if clss[i] == 0 and len(unknown_object_array.objects) < len(GEMINI_COLORS):
                 unknown_object = DetectedObjectWithImage()
                 unknown_object.class_name = "unknown"
                 unknown_object.probability = conf[i]
@@ -154,7 +156,9 @@ class Detector:
 
 if __name__ == '__main__':
 
+    # Initialize the ROS node
     rospy.init_node('object_detection', anonymous=True)
 
+    # Create the detector object and run it
     detector = Detector()
     detector.run()
