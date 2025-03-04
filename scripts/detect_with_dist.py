@@ -4,7 +4,6 @@ from geometry_msgs.msg import PoseWithCovariance, Pose, Twist
 from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray, DetectedObjectWithImage, DetectedObjectWithImageArray
 import message_filters
 from nav_msgs.msg import OccupancyGrid
-from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 
 import tf
@@ -60,6 +59,22 @@ class StochOccupancyGrid2D(object):
         self.probs[y_min:y_max+1, x_min:x_max+1] = 1.0
 
     def is_overlapped(self, x, y, width, height):
+        """
+        Determine if an object is overlapped with the map.
+        Args:
+            x (float): The x-coordinate of the object's center in meters.
+            y (float): The y-coordinate of the object's center in meters.
+            width (float): The width of the object in meters.
+            height (float): The height of the object in meters.
+        Returns:
+            bool: True if the object is overlapped with the map, False otherwise.
+        Notes:
+            - The function calculates the object's radius as half of the minimum of its width and height.
+            - It checks if the object's center is within the map boundaries.
+            - It calculates the grid indices of the object's bounding box.
+            - It counts the number of occupied cells within the bounding box.
+            - It returns True if more than 20% of the cells within the bounding box are occupied.
+        """
         # Given global x/y coordinates, and width/height of the object in meters, return if the object is overlapped with the map
         x1, y1 = self.get_index((x, y))
 
@@ -86,15 +101,18 @@ class StochOccupancyGrid2D(object):
         # Calculate the percentage of occupied cells
         occupied_percentage = (occupied_cells / total_cells) * 100
 
-        return occupied_percentage > 20  # Return True if more than 50% of the cells are occupied
+        return occupied_percentage > 50  # Return True if more than 50% of the cells are occupied
 
 
 class Detector:
     
     def __init__(self):
+        # Load the YOLO detector model
         weights_file = rospy.get_param('~weights_file', '../weights/osod.pt')
         self.model = YOLO(weights_file)
-        labels_file = rospy.get_param('~coco_labels_file', 'labels.txt')
+
+        # Get the corresponding labels for the classes
+        labels_file = rospy.get_param('~labels_file', 'labels.txt')
         with open(labels_file, 'r') as f:
             self.labels = f.read().splitlines()
         print("Using model " + weights_file)
@@ -102,19 +120,19 @@ class Detector:
         # FIXME: Load from a parameter
         self.tall = False
 
+        # These keep track of whether the robot is turning or not, 
+        # The depth images produced when turning are not reliable, so we need to ignore them
         self.is_turning = False
         self.time_since_turning = 0
 
         # Create the publisher that will show image with bounding boxes
         self.boxes_publisher = rospy.Publisher('/camera/color/image_with_boxes', Image, queue_size=1)
 
+        # Create the publishers that send known objects and unknown objects
         self.detected_object_publisher = rospy.Publisher('/detected_objects', DetectedObjectArray, queue_size=10)
         self.unknown_object_publisher = rospy.Publisher('/unknown_objects', DetectedObjectWithImageArray, queue_size=10)
-        self.marker_pub = rospy.Publisher('/text_marker', MarkerArray, queue_size=10)
 
-        self.num_markers = 0
-        self.marker_array = MarkerArray()
-
+        # Get the camera parameters to compute depth correctly
         camera_info_msg = rospy.wait_for_message("/camera/color/camera_info", CameraInfo)
         camera_info = camera_info_msg.K
         camera_info = np.array(camera_info).reshape(3, 3)
@@ -123,6 +141,9 @@ class Detector:
         self.cx = camera_info[0, 2]
         self.cy = camera_info[1, 2]
 
+        # Get the map and create a StochOccupancyGrid2D object
+        # self.map keeps track of the original map plus objects that have been detected
+        # so that we don't need to query the LLM multiple times for the same object
         self.map_msg = rospy.wait_for_message("/navigation_map", OccupancyGrid)
         self.map = StochOccupancyGrid2D(self.map_msg.info.resolution, 
                                              self.map_msg.info.width, 
@@ -132,18 +153,43 @@ class Detector:
                                                                    5,
                                                    self.map_msg.data)
 
+        # Create the transform listener to get current location of mobile robot
         self.tf_listener = tf.TransformListener()
-
-        self.unknown_label_subscriber = rospy.Subscriber('/labeled_unknown_objects', DetectedObjectArray, self.unknown_label_callback, queue_size=10)
+        
+        # Subscribe to  the cmd_vel topic to determine if the robot is turning or not
         self.cmd_vel_subscriber = rospy.Subscriber('/cmd_vel', Twist, self.cmd_vel_callback, queue_size=1)    
+
+        # Subscribe to the RGB and depth images, and create a time synchronizer
         self.rbg_sub = message_filters.Subscriber('/camera/color/image_raw', Image)
         self.depth_sub = message_filters.Subscriber('/camera/depth/image_raw', Image)
-
         self.ts = message_filters.ApproximateTimeSynchronizer([self.rbg_sub, self.depth_sub], 1, 0.1)
         self.ts.registerCallback(self.unifiedCallback)
 
     def unifiedCallback(self, rgb_data, depth_data):
-
+        """
+        Callback function to process synchronized RGB and depth data for object detection.
+        Args:
+            rgb_data (sensor_msgs.msg.Image): The RGB image data.
+            depth_data (sensor_msgs.msg.Image): The depth image data.
+        Returns:
+            None
+        This function performs the following steps:
+        1. Checks if the robot is turning and returns early if it is.
+        2. Retrieves the transform from the map frame to the camera_link frame.
+        3. Converts the RGB image data to a numpy array.
+        4. Rotates the image if the camera is mounted on a tall robot.
+        5. Performs object detection using a YOLO model.
+        6. Extracts bounding boxes, confidence scores, and class labels from the detection results.
+        7. Draws bounding boxes and labels on the image for detected objects.
+        8. Creates and populates DetectedObjectArray and DetectedObjectWithImageArray messages for known and unknown objects, respectively.
+        9. Converts the depth image data to a numpy array and rotates it if necessary.
+        10. Filters detected objects based on depth information and map overlap.
+        11. Publishes the image with all bounding boxes.
+        12. Publishes the known and unknown detected objects.
+        Note:
+            - The function uses ROS (Robot Operating System) for message passing and transformations.
+            - The function assumes that the YOLO model, ROS publishers, and other necessary components are properly initialized.
+        """
         if self.is_turning:
             # Can't rely on data if robot is turning
             return
@@ -163,38 +209,45 @@ class Detector:
             # Rotate image 180 degrees if mounted on tall robot
             image = cv2.rotate(image, cv2.ROTATE_180)
 
-        # Perform object detection
+        # Perform object detection using YOLO
         results = self.model.predict(image, device=0, conf=0.20, agnostic_nms=True, iou=IOU_THRESHOLD, verbose=False)
 
         detect_time = time.time()
         
-        # Draw the bounding boxes
-        # image_with_boxes = results[0].plot()
+        # Get the bounding boxes, confidence, and class labels
         boxes = results[0].boxes.xyxy.cpu().numpy()
         conf = results[0].boxes.conf.cpu().numpy()
-        cls = results[0].boxes.cls.cpu().numpy().astype(int)
-        num_detected = len(cls)
-        num_known_detected = np.sum(conf > KNOWN_OBJECT_THRESHOLD and cls != 0)
-        num_unknown_detected = np.sum(conf > UNKNOWN_OBJECT_THRESHOLD and cls == 0)
+        clss = results[0].boxes.cls.cpu().numpy().astype(int)
+        num_detected = len(clss)
+        num_known_detected = np.sum(conf > KNOWN_OBJECT_THRESHOLD and clss != 0)
+        num_unknown_detected = np.sum(conf > UNKNOWN_OBJECT_THRESHOLD and clss == 0)
 
-        image_with_boxes = image.copy()
+        image_with_boxes = image.copy()  # Image to show all bounding boxes
+        image_with_unknown_boxes = image.copy()  # Image to show only unknown bounding boxes
         for i in range(num_detected):
-            if cls[i] == 0 and conf[i] < UNKNOWN_OBJECT_THRESHOLD:
+
+            # Make sure the confidence is above the threshold
+            if clss[i] == 0 and conf[i] < UNKNOWN_OBJECT_THRESHOLD:
                 continue
-            elif cls[i] != 0 and conf[i] < KNOWN_OBJECT_THRESHOLD:
+            elif clss[i] != 0 and conf[i] < KNOWN_OBJECT_THRESHOLD:
                 continue
 
+            # Draw box and label on the image
             box = boxes[i]
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-            cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[cls[i]], 2)
-            cv2.putText(image_with_boxes, f"{self.labels[cls[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[cls[i]], 2)
+            cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[clss[i]], 2)
+            cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
+            # Note: we don't draw on the image_with_unknown_boxes because we are going to filter them first, only objects which don't intersect with 
+            # the map or objects we haven't seen before will be added.
 
+        # Create the DetectedObjectArray message for storing known detected objects
         detection_array = DetectedObjectArray()
         detection_array.header.stamp = rospy.Time.now()
         detection_array.header.frame_id = 'map'
         detection_array.objects = []
 
+        # Create the DetectedObjectImageArray message for storing unknown detected objects
         unknown_object_array = DetectedObjectWithImageArray()
         unknown_object_array.header.stamp = rospy.Time.now()
         unknown_object_array.header.frame_id = 'map'
@@ -202,7 +255,6 @@ class Detector:
 
         data_dict = {}
         data_count = 0
-
         if num_detected > 0:
             # Convert depth image to numpy array
             depth = np.frombuffer(depth_data.data, dtype=np.uint16).reshape(depth_data.height, depth_data.width)
@@ -211,17 +263,17 @@ class Detector:
                 # Rotate the depth image 180 degrees
                 depth = np.flip(depth)
         
+            # Get only objects that are not overlapped with the map (use the depth + stored map to determine this)
             (data_dict, 
             data_count, 
             detection_array, 
             unknown_object_array,
             image_with_boxes,
-            image) = self.depth_calculation(boxes, conf, cls, num_detected, depth, trans, rot, 
+            image_with_unknown_boxes) = self.filter_objects(boxes, conf, clss, num_detected, depth, trans, rot, 
                                             data_dict, data_count, detection_array, 
-                                            unknown_object_array, image_with_boxes, image)
-            
+                                            unknown_object_array, image_with_boxes, image_with_unknown_boxes)
 
-        # Create the ROS Image and publish it
+        # Publish the image with all bounding boxes
         image_msg = Image()
         image_msg.data = image_with_boxes.tobytes()
         image_msg.height = image_with_boxes.shape[0]
@@ -229,42 +281,47 @@ class Detector:
         image_msg.encoding = 'rgb8'
         image_msg.step = 3 * image_with_boxes.shape[1]
         image_msg.header.stamp = rospy.Time.now()
-        self.publisher.publish(image_msg)
+        self.boxes_publisher.publish(image_msg)
 
-        # Publish the detected objects array if any objects exist
+        # Publish the known objects
         if len(detection_array.objects) > 0:
             self.detected_object_publisher.publish(detection_array)
 
-        # Publish the unknown objects array if any objects exist
+        # Publish the unknown objects
         if len(unknown_object_array.objects) > 0:   
-            _, buffer = cv2.imencode('.jpg', image)
+            # Convert image to the ROS format
+            _, buffer = cv2.imencode('.jpg', image_with_unknown_boxes)
             unknown_object_array.data = np.array(buffer).tobytes()
-            self.unknown_object_publisher.publish(unknown_object_array)
+
+            self.unknown_object_publisher.publish(unknown_object_array)  # Publish the unknown objects
 
         end_time = time.time()
-        print('Detection time: {}'.format(detect_time - start_time))
-        print('Elapsed time: {}'.format(end_time - start_time))
+        # print('Detection time: {}'.format(detect_time - start_time))
+        # print('Elapsed time: {}'.format(end_time - start_time))
 
-    def depth_calculation(self, boxes, conf, cls, num_detected, depth, trans, rot, data_dict, data_count, detection_array, 
-                           unknown_object_array, image_with_boxes, image):
-        # Get map to camera_link transform
+    def filter_objects(self, boxes, conf, clss, num_detected, depth, trans, rot, data_dict, data_count, detection_array, 
+                           unknown_object_array, image_with_boxes, unknown_image):
+
+        # Get location of camera in map frame
         x_camera = trans[0]
         y_camera = trans[1]
         _, _, theta_camera = euler_from_quaternion(rot)
         theta_camera = theta_camera
         
         for i in range(num_detected):
-            class_num = cls[i]
+            class_num = clss[i]
             class_name = self.labels[class_num]
             if class_name == 'person':
                 continue
             class_score = conf[i]
 
+            # Skip objects without a high enough confidence score
             if class_num == 0 and class_score < UNKNOWN_OBJECT_THRESHOLD:
                 continue
             elif class_num != 0 and class_score < KNOWN_OBJECT_THRESHOLD:
                 continue
             
+            # Get the bounding box coordinates  
             x_min, y_min, x_max, y_max = boxes[i]
             x1 = int(x_min)
             y1 = int(y_min)
@@ -277,14 +334,18 @@ class Detector:
             # Get the estimated depth of the object (in meters)
             estimated_depth = self.get_depth(x1, y1, x2, y2, depth)
 
+            # Write the estimated depth on the image
+            image_with_boxes = cv2.putText(image_with_boxes, 'Depth: {:.2f} m'.format(estimated_depth), (x1, y1+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+
+            # Skip objects with invalid depth values (0) or too far away (> 5 meters) since they are unreliable
             if estimated_depth == 0 or estimated_depth > 5:
                 continue
 
-            # Get the object's position in the camera frame
-            local_x_min = (x1 - self.cx) * estimated_depth / self.fx  # meters
-            local_z_min = (y1 - self.cy) * estimated_depth / self.fy  # meters
-            local_x_max = (x2 - self.cx) * estimated_depth / self.fx  # meters
-            local_z_max = (y2 - self.cy) * estimated_depth / self.fy  # meters
+            # Get the object's position in the camera frame using the estimated depth
+            local_x_min = (x1 - self.cx) * estimated_depth / self.fx  # meters (left-most point)
+            local_z_min = (y1 - self.cy) * estimated_depth / self.fy  # meters (bottom-most point)
+            local_x_max = (x2 - self.cx) * estimated_depth / self.fx  # meters (right-most point)
+            local_z_max = (y2 - self.cy) * estimated_depth / self.fy  # meters (top-most point)
             local_x_center = (x_center - self.cx) * estimated_depth / self.fx  # meters
             local_z_center = (y_center - self.cy) * estimated_depth / self.fy  # meters
 
@@ -294,8 +355,11 @@ class Detector:
             
             if object_height < 0.1 or object_width < 0.1:
                 continue  # Skip objects that are too small
+
+            # Choose the object depth (i.e. width in the direction of the camera) as the minimum of width, height, and 0.33 meters
             object_depth = np.min([object_width, object_height, 0.33])
             
+            # hypot is the distance from camera to object's 3D center
             hypot = np.sqrt(local_x_center**2 + (estimated_depth + object_depth/2)**2)
 
             # Calculate the object's position in the map frame
@@ -305,9 +369,10 @@ class Detector:
 
             is_overlapped = False
             if self.map.is_overlapped(x_map, y_map, object_width, object_height):
-                # image_with_boxes = cv2.putText(image_with_boxes, 'Overlapped', (x1, y1+30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+                image_with_boxes = cv2.putText(image_with_boxes, 'Overlapped', (x1, y1+30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
                 is_overlapped = True
 
+            # Add the object to the data dictionary
             object_dict = {}
             object_dict['class_name'] = class_name
             object_dict['depth'] = estimated_depth
@@ -320,7 +385,7 @@ class Detector:
             data_dict[data_count] = object_dict
             data_count += 1
 
-            # Create DetectedObject message
+            # Create DetectedObject message and add to the DetectedObjectArray message
             detected_object = DetectedObject()
             detected_object.class_name = class_name
             detected_object.probability = class_score
@@ -337,12 +402,13 @@ class Detector:
             detected_object.y2 = y2
             detection_array.objects.append(detected_object)
 
+            # Add unknown objects to the unknown_object_array if not overlapped with the map
             if not is_overlapped and class_name == 'unknown':
+
+                # Limit the number of unknown objects to the number of colors available
                 if len(unknown_object_array.objects) < len(GEMINI_COLORS):
 
                     # Get the part of the image within the bounding box
-                    object_image = image[y1:y2, x1:x2]
-                    _, buffer = cv2.imencode('.jpg', object_image)
                     unknown_object = DetectedObjectWithImage()
                     unknown_object.class_name = class_name
                     unknown_object.probability = class_score
@@ -353,49 +419,57 @@ class Detector:
                     unknown_object.x2 = x2
                     unknown_object.y2 = y2
                     unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
-                    image = cv2.rectangle(image, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)], 2)
-                    # unknown_object.data = np.array(buffer).tobytes()
                     unknown_object_array.objects.append(unknown_object)
 
-            # Write estimated depth on the image
-            image_with_boxes = cv2.putText(image_with_boxes, 'Depth: {:.2f} m'.format(estimated_depth), (x1, y1+15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
-            # image_with_boxes = cv2.putText(image_with_boxes, '{:.2f}, {:.2f}, {:.2f}, {:.2f}'.format(x_min, y_min, x_max, y_max), (x[0]+10, y[0]+70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
-            # image_with_boxes = cv2.putText(image_with_boxes, '{:.2f}, {:.2f}'.format(x_map, y_map), (x1+10, y1+90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
-            # image_with_boxes = cv2.putText(image_with_boxes, 'Width: {:.2f} m'.format(object_width), (x1+10, y1+110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
-
-            if class_name == "unknown":
-                if is_overlapped:
-                    image_with_boxes = cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                else:
-                    image_with_boxes = cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                image_with_boxes = cv2.putText(image_with_boxes, '{}: {:.2f}'.format(class_name, class_score), (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
-            else:
-                if is_overlapped:
-                    image_with_boxes = cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                else:
-                    image_with_boxes = cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), (126, 0, 126), 2)
+                    # Update map with the object's position
                     self.map.add_to_map(x_map, y_map, object_width)
-                    self.publish_text(x_map, y_map, class_name)
-                image_with_boxes = cv2.putText(image_with_boxes, '{}: {:.2f}'.format(class_name, class_score), (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
+
+                    unknown_image = cv2.rectangle(unknown_image, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)-1], 2)
             
-        return data_dict, data_count, detection_array, unknown_object_array, image_with_boxes, image
+        return data_dict, data_count, detection_array, unknown_object_array, image_with_boxes, unknown_image
 
     def get_depth(self, x_min, y_min, x_max, y_max, depth):
+        """
+        Calculate the estimated depth of a region in a depth image.
+        This function extracts the depth values within a specified bounding box
+        from a depth image, removes zero values, and returns the 25th percentile
+        depth value converted to meters.
+        Args:
+            x_min (int): The minimum x-coordinate of the bounding box.
+            y_min (int): The minimum y-coordinate of the bounding box.
+            x_max (int): The maximum x-coordinate of the bounding box.
+            y_max (int): The maximum y-coordinate of the bounding box.
+            depth (np.ndarray): The depth image as a 2D numpy array.
+        Returns:
+            float: The estimated depth in meters. Returns 0.0 if no valid depth
+            values are found within the bounding box.
+        """
+        # Get the depth values within the bounding box
         depth_values = depth[int(y_min):int(y_max), int(x_min):int(x_max)].flatten()
 
         # Remove zero depth values
         depth_values = depth_values[depth_values > 0]
 
         if len(depth_values) == 0:
-            return 0.0  # or some default value if no valid depth values are found
+            return 0.0  # 0 since no valid depth values are found
 
         # Get the 25th percentile depth
-        estimated_depth = np.percentile(depth_values, 25) / 1000.0  # Convert to meters
+        estimated_depth = np.percentile(depth_values, 25) / 1000.0  # Convert to meters (/1000)
 
         return estimated_depth
 
     def cmd_vel_callback(self, msg):
-
+        """
+        Callback function for processing velocity command messages.
+        This function is triggered when a new velocity command message is received.
+        It updates the `is_turning` attribute based on the angular velocity of the message.
+        If the absolute value of the angular velocity (`msg.angular.z`) is greater than 0.07,
+        it sets `is_turning` to True and updates `time_since_turning` to the current time.
+        If the time elapsed since the last turn is less than 0.25 seconds, it keeps `is_turning` as True.
+        Otherwise, it sets `is_turning` to False.
+        Args:
+            msg (geometry_msgs.msg.Twist): The velocity command message containing linear and angular velocities.
+        """
         if np.abs(msg.angular.z) > 0.07:
             self.is_turning = True
             self.time_since_turning = time.time()
@@ -404,54 +478,16 @@ class Detector:
         else:
             self.is_turning = False
 
-    def unknown_label_callback(self, msg):
-        # For each object, add it to the map
-        for obj in msg.objects:
-            # Get the object's position in the map frame
-            x_map = obj.pose.position.x
-            y_map = obj.pose.position.y
-            object_width = obj.width
-
-            # Add the object to the map
-            self.map.add_to_map(x_map, y_map, object_width)
-            self.publish_text(x_map, y_map, obj.class_name)
-
-    def publish_text(self, x, y, class_name):
-        # Publish to RVIZ
-        marker = Marker()
-        marker.header.frame_id = 'map'
-        marker.header.stamp = rospy.Time.now()
-        marker.ns = "text"
-        marker.id = self.num_markers
-        marker.type = Marker.TEXT_VIEW_FACING
-        marker.action = Marker.ADD
-        marker.text = class_name
-
-        marker.pose.position.x = x
-        marker.pose.position.y = y
-        marker.pose.position.z = 0.5
-        marker.pose.orientation.w = 1.0
-
-        marker.scale.z = 0.1
-        marker.color.a = 1.0
-        marker.color.r = 1.0
-        marker.color.g = 1.0
-        marker.color.b = 1.0
-
-        self.marker_array.markers.append(marker)
-
-        self.marker_pub.publish(self.marker_array)
-        self.num_markers += 1
-
     def run(self):
         rospy.spin()
 
-time_since_turning = 0
+
 if __name__ == '__main__':
     
     # Initialize the ROS node
     rospy.init_node('object_detection', anonymous=True)
 
+    # Create the detector object and run it
     detector = Detector()
     detector.run()
     
