@@ -65,7 +65,12 @@ class GeminiBridge:
         # Send the image to the LLM --- Have to send via a POST request since this version of Python doesn't 
         # support the LLM API
         data = {'query': QUERY, 'query_type': 'image', 'image_name': "unknown_object.jpg"}
-        response = requests.post(self.server, json=data)
+
+        try:
+            response = requests.post(self.server, json=data)
+        except:
+            print("Error sending image to the LLM")
+            return
         response = response.json()['response']
         response = json.loads(response)
 
