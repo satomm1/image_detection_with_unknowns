@@ -28,7 +28,7 @@ Usage:
 
 QUERY = """Provide the basic name of the most prominent object in each of the bounding boxes delineated by color. 
            Provide as consise of a name as possible. For example, "dog" instead of "black dog".
-           If any of the bounding boxes appears to having nothing of note, do not include it in the response.
+           If any of the bounding boxes don't have an object, do not include it in the response.
            The possible colors are red, green, blue, purple, pink, orange, and yellow.
         """
 
