@@ -219,8 +219,8 @@ class Detector:
         conf = results[0].boxes.conf.cpu().numpy()
         clss = results[0].boxes.cls.cpu().numpy().astype(int)
         num_detected = len(clss)
-        num_known_detected = np.sum(conf > KNOWN_OBJECT_THRESHOLD and clss != 0)
-        num_unknown_detected = np.sum(conf > UNKNOWN_OBJECT_THRESHOLD and clss == 0)
+        num_known_detected = np.sum((conf > KNOWN_OBJECT_THRESHOLD) & (clss != 0))
+        num_unknown_detected = np.sum((conf > UNKNOWN_OBJECT_THRESHOLD) & (clss == 0))
 
         image_with_boxes = image.copy()  # Image to show all bounding boxes
         image_with_unknown_boxes = image.copy()  # Image to show only unknown bounding boxes
