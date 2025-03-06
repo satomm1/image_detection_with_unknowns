@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import rospy
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2
 from geometry_msgs.msg import PoseWithCovariance, Pose, Twist
@@ -9,6 +11,13 @@ from geometry_msgs.msg import Point
 
 import tf
 from tf.transformations import euler_from_quaternion
+
+# Requirements for Mobile Clip
+import torch
+from PIL import Image
+import sys
+sys.path.insert(0, '/workspace/catkin_ws/src/image_detection_with_unknowns/ml-mobileclip')
+import mobileclip
 
 from ultralytics import YOLO
 import numpy as np
@@ -58,8 +67,18 @@ class Detector:
             self.labels = f.read().splitlines()
         print("Using model " + weights_file)
 
+        # Load the CLIP model and tokenizer
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.clip_model, _, self.clip_preprocess = mobileclip.create_model_and_transforms('mobileclip_s0', pretrained='checkpoints/mobileclip_s0.pt', device=self.device)
+        self.tokenizer = mobileclip.get_tokenizer('mobileclip_s0')
+
+        # Initialize variables for storing object names and text features for the CLIP model
+        self.object_names = []
+        self.text = None
+        self.text_features = None
+
         # FIXME: Load from a parameter
-        self.tall = False
+        self.tall = False  # True if camera mounted on tall robot (i.e. upside down)
 
         # Create the publisher that will show image with bounding boxes
         self.boxes_publisher = rospy.Publisher('/camera/color/image_with_boxes', Image, queue_size=1)
@@ -115,16 +134,29 @@ class Detector:
             box = boxes[i]
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
             cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[clss[i]], 2)
-            cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+            if clss[i] != 0:
+                cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
-            # If the object is unknown, add it to the unknown_object_array and draw on unknown image
+            # If the object is unknown, first compare to CLIP, then add it to the unknown_object_array and draw on unknown image if truly unknown
             if clss[i] == 0 and len(unknown_object_array.objects) < len(GEMINI_COLORS):
-                unknown_object = DetectedObjectWithImage()
-                unknown_object.class_name = "unknown"
-                unknown_object.probability = conf[i]
-                unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
-                cv2.rectangle(image_with_unknown_boxes, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)], 2)
-                unknown_object_array.objects.append(unknown_object)
+                
+                clip_name = self.clip_classify(image[y1:y2, x1:x2])
+                if clip_name != "unknown":
+                    # If the object is known, draw the label on the image
+                    cv2.putText(image_with_boxes, f"CLIP: {clip_name}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+
+                    # Add the name to the object_names list and update the text features
+                    self.update_text_features(clip_name)
+                else:
+                    # CLIP didn't classify the object, so it is unknown
+                    cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+
+                    unknown_object = DetectedObjectWithImage()
+                    unknown_object.class_name = "unknown"
+                    unknown_object.probability = conf[i]
+                    unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
+                    cv2.rectangle(image_with_unknown_boxes, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)], 2)
+                    unknown_object_array.objects.append(unknown_object)
 
         # Publish the image with all bounding boxes
         image_msg = Image()
@@ -150,6 +182,49 @@ class Detector:
         end_time = time.time()
         # print('Detection time: {}'.format(detect_time - start_time))
         # print('Elapsed time: {}'.format(end_time - start_time))
+
+    
+    def clip_classify(self, img):
+
+        if len(self.object_names) <= 1:
+            # We require at least 2 clip names to classify
+            return "unknown"
+
+        # Preprocess the image
+        img = self.clip_preprocess(img).unsqueeze(0)
+
+        # Encode the image
+        with torch.no_grad(), torch.cuda.amp.autocast():
+            img = img.to(self.device, dtype=torch.float16)
+            img_features = self.clip_model.encode_image(img)
+            img_features /= img_features.norm(dim=-1, keepdim=True)
+
+            # Calculate the similarity scores between the image and text features
+            text_scores = (100.0 * img_features @ self.text_features.T)
+        
+        ranked_scores = torch.argsort(text_scores, descending=True)
+        # Get ratio of top score to second score
+        ratio = text_scores[ranked_scores[0]] / text_scores[ranked_scores[1]]
+
+        if ratio > 2:
+            return self.object_names[ranked_scores[0]]
+        else:
+            return "unknown"
+
+    
+    def update_text_features(self, name):
+        if name in self.object_names:
+            # Don't need to update if the name is already in the list
+            return
+        
+        # Add the new name to the list
+        self.object_names.append(name)
+        self.text = self.tokenizer(self.object_names).to(self.device)
+
+        # Get the text features
+        with torch.no_grad(), torch.cuda.amp.autocast():
+            self.text_features = self.model.encode_text(self.text)
+            self.text_features /= self.text_features.norm(dim=-1, keepdim=True)
 
     def run(self):
         rospy.spin()

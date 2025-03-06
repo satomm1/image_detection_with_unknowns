@@ -1,6 +1,5 @@
 import rospy
 from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray, DetectedObjectWithImage, DetectedObjectWithImageArray
-from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray, DetectedObjectWithImage, DetectedObjectWithImageArray
 
 import requests
 import shutil
@@ -54,7 +53,7 @@ class GeminiBridge:
         if self.done:
             return
         
-        # Save obj.data as an image
+        # Save msg.data as an image
         np_arr = np.frombuffer(msg.data, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
