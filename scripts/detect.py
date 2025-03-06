@@ -22,9 +22,6 @@ import numpy as np
 import cv2
 import time
 
-import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
 """
 This script performs object detection using a YOLO model on RGB and depth images from a camera.
 It publishes images with bounding boxes and detected unknown objects.
@@ -46,7 +43,7 @@ Usage:
 """
 
 KNOWN_OBJECT_THRESHOLD = 0.4
-UNKNOWN_OBJECT_THRESHOLD = 0.1
+UNKNOWN_OBJECT_THRESHOLD = 0.25
 
 IOU_THRESHOLD = 0.1  # Set the IoU threshold for NMS
 COLORS = [(255,50,50), (207,49,225), (114,15,191), (22,0,222), (0,177,122), (34,236,169),
@@ -94,6 +91,8 @@ class Detector:
         self.depth_sub = message_filters.Subscriber('/camera/depth/image_raw', Image)
         self.ts = message_filters.ApproximateTimeSynchronizer([self.rbg_sub, self.depth_sub], 1, 0.1)
         self.ts.registerCallback(self.unifiedCallback)
+
+        self.labeled_pub = rospy.Subscriber("/labeled_unknown_objects", DetectedObjectArray, self.labeled_callback, queue_size=3)
 
     def unifiedCallback(self, rgb_data, depth_data):
 
@@ -147,9 +146,6 @@ class Detector:
                 if clip_name != "unknown":
                     # If the object is known, draw the label on the image
                     cv2.putText(image_with_boxes, f"CLIP: {clip_name}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
-
-                    # Add the name to the object_names list and update the text features
-                    self.update_text_features(clip_name)
                 else:
                     # CLIP didn't classify the object, so it is unknown
                     cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
@@ -186,10 +182,22 @@ class Detector:
         # print('Detection time: {}'.format(detect_time - start_time))
         # print('Elapsed time: {}'.format(end_time - start_time))
 
+
+    def labeled_callback(self, msg):
+        # Update the object names and text features
+        names_changed = False
+        for obj in msg.objects:
+            if obj.class_name not in self.object_names:
+                self.object_names.append(obj.class_name)
+                names_changed = True
+
+        if names_changed:
+            self.update_text_features()
+
     
     def clip_classify(self, img):
-
-        if len(self.object_names) <= 1:
+        
+        if len(self.object_names) < 2 or self.text_features is None:
             # We require at least 2 clip names to classify
             return "unknown"
 
@@ -206,28 +214,25 @@ class Detector:
             # Calculate the similarity scores between the image and text features
             text_scores = (100.0 * img_features @ self.text_features.T)
         
-        ranked_scores = torch.argsort(text_scores, descending=True)
+        ranked_scores = torch.argsort(text_scores, descending=True).cpu().numpy()[0]
         # Get ratio of top score to second score
+        text_scores = text_scores.cpu().numpy()[0]
         ratio = text_scores[ranked_scores[0]] / text_scores[ranked_scores[1]]
 
-        if ratio > 2:
+        if ratio > 1.4:
             return self.object_names[ranked_scores[0]]
         else:
             return "unknown"
 
     
-    def update_text_features(self, name):
-        if name in self.object_names:
-            # Don't need to update if the name is already in the list
-            return
-        
-        # Add the new name to the list
-        self.object_names.append(name)
+    def update_text_features(self):
+
+        # Get updated tokens
         self.text = self.tokenizer(self.object_names).to(self.device)
 
         # Get the text features
         with torch.no_grad(), torch.cuda.amp.autocast():
-            self.text_features = self.model.encode_text(self.text)
+            self.text_features = self.clip_model.encode_text(self.text)
             self.text_features /= self.text_features.norm(dim=-1, keepdim=True)
 
     def run(self):
@@ -240,5 +245,5 @@ if __name__ == '__main__':
 
     # Create the detector object and run it
     detector = Detector()
-    # detector.run()
-    print("Load Success")
+    detector.run()
+    # print("Load Success")
