@@ -92,7 +92,8 @@ class Detector:
         self.ts = message_filters.ApproximateTimeSynchronizer([self.rbg_sub, self.depth_sub], 1, 0.1)
         self.ts.registerCallback(self.unifiedCallback)
 
-        self.labeled_pub = rospy.Subscriber("/labeled_unknown_objects", DetectedObjectArray, self.labeled_callback, queue_size=3)
+        # Subscribe to the labeled unknown objects
+        self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", DetectedObjectArray, self.labeled_callback, queue_size=3)
 
     def unifiedCallback(self, rgb_data, depth_data):
 

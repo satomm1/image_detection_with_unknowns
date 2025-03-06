@@ -9,13 +9,17 @@ from geometry_msgs.msg import Point
 import tf
 from tf.transformations import euler_from_quaternion
 
+import torch
+from PIL import Image as PILImage
+import mobileclip
+
 from ultralytics import YOLO
 import numpy as np
 import cv2
 import time
 
 KNOWN_OBJECT_THRESHOLD = 0.4
-UNKNOWN_OBJECT_THRESHOLD = 0.1
+UNKNOWN_OBJECT_THRESHOLD = 0.25
 
 IOU_THRESHOLD = 0.1  # Set the IoU threshold for NMS
 COLORS = [(255,50,50), (207,49,225), (114,15,191), (22,0,222), (0,177,122), (34,236,169),
@@ -117,6 +121,20 @@ class Detector:
             self.labels = f.read().splitlines()
         print("Using model " + weights_file)
 
+        self.model_conf = min(KNOWN_OBJECT_THRESHOLD, UNKNOWN_OBJECT_THRESHOLD)
+
+        # Load the CLIP model and tokenizer
+        clip_model = rospy.get_param('~clip_model', 'checkpoints/mobileclip_s0.pt')
+        root_dir = rospy.get_param('~root_dir', None)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.clip_model, _, self.clip_preprocess = mobileclip.create_model_and_transforms('mobileclip_s0', pretrained=clip_model, root_dir=root_dir, device=self.device)
+        self.tokenizer = mobileclip.get_tokenizer('mobileclip_s0', root_dir=root_dir)
+
+        # Initialize variables for storing object names and text features for the CLIP model
+        self.object_names = []
+        self.text = None
+        self.text_features = None
+
         # FIXME: Load from a parameter
         self.tall = False
 
@@ -165,6 +183,9 @@ class Detector:
         self.ts = message_filters.ApproximateTimeSynchronizer([self.rbg_sub, self.depth_sub], 1, 0.1)
         self.ts.registerCallback(self.unifiedCallback)
 
+        # Subscribe to the labeled unknown objects
+        self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", DetectedObjectArray, self.labeled_callback, queue_size=3)
+
     def unifiedCallback(self, rgb_data, depth_data):
         """
         Callback function to process synchronized RGB and depth data for object detection.
@@ -210,7 +231,7 @@ class Detector:
             image = cv2.rotate(image, cv2.ROTATE_180)
 
         # Perform object detection using YOLO
-        results = self.model.predict(image, device=0, conf=0.20, agnostic_nms=True, iou=IOU_THRESHOLD, verbose=False)
+        results = self.model.predict(image, device=0, conf=self.model_conf, agnostic_nms=True, iou=IOU_THRESHOLD, verbose=False)
 
         detect_time = time.time()
         
@@ -236,7 +257,19 @@ class Detector:
             box = boxes[i]
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
             cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[clss[i]], 2)
-            cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+
+            if clss[i] != 0:
+                cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+            else:
+                clip_name = self.clip_classify(image[y1:y2, x1:x2])
+                if clip_name != 'unknown':
+                    # If the object is known, draw the label on the image
+                    cv2.putText(image_with_boxes, f"CLIP: {clip_name}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+                    # Change clss[i] to not be 0 so that it is considered a known object
+                    clss[i] = -1
+                else: 
+                    # CLIP didn't classify the object, so it is unknown
+                    cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
             # Note: we don't draw on the image_with_unknown_boxes because we are going to filter them first, only objects which don't intersect with 
             # the map or objects we haven't seen before will be added.
@@ -255,7 +288,7 @@ class Detector:
 
         data_dict = {}
         data_count = 0
-        if num_detected > 0:
+        if num_known_detected > 0 or num_unknown_detected > 0:
             # Convert depth image to numpy array
             depth = np.frombuffer(depth_data.data, dtype=np.uint16).reshape(depth_data.height, depth_data.width)
 
@@ -310,13 +343,17 @@ class Detector:
         
         for i in range(num_detected):
             class_num = clss[i]
-            class_name = self.labels[class_num]
+            if class_num == -1:
+                class_name = 'clip detected'
+            else:
+                class_name = self.labels[class_num]
+
             if class_name == 'person':
                 continue
             class_score = conf[i]
 
             # Skip objects without a high enough confidence score
-            if class_num == 0 and class_score < UNKNOWN_OBJECT_THRESHOLD:
+            if class_num <= 0 and class_score < UNKNOWN_OBJECT_THRESHOLD:
                 continue
             elif class_num != 0 and class_score < KNOWN_OBJECT_THRESHOLD:
                 continue
@@ -460,6 +497,64 @@ class Detector:
 
         return estimated_depth
 
+    def labeled_callback(self, msg):
+        # Update the object names and text features
+        names_changed = False
+        for obj in msg.objects:
+            if obj.class_name not in self.object_names:
+                self.object_names.append(obj.class_name)
+                names_changed = True
+
+            x_map = obj.pose.position.x
+            y_map = obj.pose.position.y
+            object_width = obj.width
+            self.map.add_to_map(x_map, y_map, object_width)
+
+        if names_changed:
+            self.update_text_features()
+
+
+    def clip_classify(self, img):
+        
+        if len(self.object_names) < 2 or self.text_features is None:
+            # We require at least 2 clip names to classify
+            return "unknown"
+
+        # Preprocess the image
+        img = PILImage.fromarray(img)
+        img = self.clip_preprocess(img).unsqueeze(0)
+
+        # Encode the image
+        with torch.no_grad(), torch.cuda.amp.autocast():
+            img = img.to(self.device, dtype=torch.float16)
+            img_features = self.clip_model.encode_image(img)
+            img_features /= img_features.norm(dim=-1, keepdim=True)
+
+            # Calculate the similarity scores between the image and text features
+            text_scores = (100.0 * img_features @ self.text_features.T)
+        
+        ranked_scores = torch.argsort(text_scores, descending=True).cpu().numpy()[0]
+        # Get ratio of top score to second score
+        text_scores = text_scores.cpu().numpy()[0]
+        ratio = text_scores[ranked_scores[0]] / text_scores[ranked_scores[1]]
+
+        if ratio > 1.4:
+            return self.object_names[ranked_scores[0]]
+        else:
+            return "unknown"
+
+        
+    def update_text_features(self):
+
+        # Get updated tokens
+        self.text = self.tokenizer(self.object_names).to(self.device)
+
+        # Get the text features
+        with torch.no_grad(), torch.cuda.amp.autocast():
+            self.text_features = self.clip_model.encode_text(self.text)
+            self.text_features /= self.text_features.norm(dim=-1, keepdim=True)
+
+
     def cmd_vel_callback(self, msg):
         """
         Callback function for processing velocity command messages.
@@ -479,6 +574,7 @@ class Detector:
             self.is_turning = True
         else:
             self.is_turning = False
+
 
     def run(self):
         rospy.spin()
