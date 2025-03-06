@@ -26,6 +26,7 @@ from mobileclip.modules.common.mobileone import reparameterize_model
 def create_model_and_transforms(
     model_name: str,
     pretrained: Optional[str] = None,
+    root_dir: Optional[str] = None,
     reparameterize: Optional[bool] = True,
     device: Union[str, torch.device] = "cpu",
 ) -> Tuple[nn.Module, Any, Any]:
@@ -42,7 +43,8 @@ def create_model_and_transforms(
         Tuple of instantiated model, and preprocessing transforms for inference.
     """
     # Config files
-    root_dir = os.path.dirname(os.path.abspath(__file__))
+    if root_dir is None:
+        root_dir = os.path.dirname(os.path.abspath(__file__))
     configs_dir = os.path.join(root_dir, "configs")
     model_cfg_file = os.path.join(configs_dir, model_name + ".json")
 
