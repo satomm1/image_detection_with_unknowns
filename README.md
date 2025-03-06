@@ -42,3 +42,6 @@ This package relies on messages located in the [mattbot_image_detection](https:/
 
 ### LLM Server
 We run the LLM server with the [gemini_api_repo](https://github.com/satomm1/gemini_api.git). Instruction for setting this up and running are included in the [repo](https://github.com/satomm1/gemini_api.git).
+
+### Importing mobileclip when using a Launch file
+This is not straightforward. For more details on a solution, see this [discussion](https://stackoverflow.com/questions/75275684/importing-python-files-functions-from-the-same-directory-in-ros-as-simple-as-it).

@@ -84,9 +84,10 @@ def create_model_and_transforms(
     return model, None, preprocess
 
 
-def get_tokenizer(model_name: str) -> nn.Module:
+def get_tokenizer(model_name: str, root_dir: Optional[str] = None) -> nn.Module:
     # Config files
-    root_dir = os.path.dirname(os.path.abspath(__file__))
+    if root_dir is None:
+        root_dir = os.path.dirname(os.path.abspath(__file__))
     configs_dir = os.path.join(root_dir, "configs")
     model_cfg_file = os.path.join(configs_dir, model_name + ".json")
 

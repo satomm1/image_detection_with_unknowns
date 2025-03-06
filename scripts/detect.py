@@ -14,15 +14,16 @@ from tf.transformations import euler_from_quaternion
 
 # Requirements for Mobile Clip
 import torch
-from PIL import Image
-import sys
-sys.path.insert(0, '/workspace/catkin_ws/src/image_detection_with_unknowns/ml-mobileclip')
+from PIL import Image as PILImage
 import mobileclip
 
 from ultralytics import YOLO
 import numpy as np
 import cv2
 import time
+
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 """
 This script performs object detection using a YOLO model on RGB and depth images from a camera.
@@ -68,9 +69,11 @@ class Detector:
         print("Using model " + weights_file)
 
         # Load the CLIP model and tokenizer
+        clip_model = rospy.get_param('~clip_model', 'checkpoints/mobileclip_s0.pt')
+        root_dir = rospy.get_param('~root_dir', None)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.clip_model, _, self.clip_preprocess = mobileclip.create_model_and_transforms('mobileclip_s0', pretrained='checkpoints/mobileclip_s0.pt', device=self.device)
-        self.tokenizer = mobileclip.get_tokenizer('mobileclip_s0')
+        self.clip_model, _, self.clip_preprocess = mobileclip.create_model_and_transforms('mobileclip_s0', pretrained=clip_model, root_dir=root_dir, device=self.device)
+        self.tokenizer = mobileclip.get_tokenizer('mobileclip_s0', root_dir=root_dir)
 
         # Initialize variables for storing object names and text features for the CLIP model
         self.object_names = []
@@ -191,6 +194,7 @@ class Detector:
             return "unknown"
 
         # Preprocess the image
+        img = PILImage.fromarray(img)
         img = self.clip_preprocess(img).unsqueeze(0)
 
         # Encode the image
@@ -236,4 +240,5 @@ if __name__ == '__main__':
 
     # Create the detector object and run it
     detector = Detector()
-    detector.run()
+    # detector.run()
+    print("Load Success")
