@@ -8,7 +8,7 @@
   <arg name="root_dir" default="$(find image_detection_with_unknowns)/src/mobileclip"/>
 
   <!-- Launch the object detection script -->
-  <node name="image_detector_node" pkg="image_detection_with_unknowns" type="detect_with_dist.py" output="log">
+  <node name="image_detector_node" pkg="image_detection_with_unknowns" type="detect_with_dist.py" output="screen">
     <param name="weights_file" value="$(arg weights_file)" />
     <param name="labels_file" value="$(arg labels_file)" />
     <param name="clip_model" value="$(arg clip_model)" />

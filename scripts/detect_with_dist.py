@@ -304,7 +304,7 @@ class Detector:
             image_with_boxes,
             image_with_unknown_boxes) = self.filter_objects(boxes, conf, clss, num_detected, depth, trans, rot, 
                                             data_dict, data_count, detection_array, 
-                                            unknown_object_array, image_with_boxes, image_with_unknown_boxes)
+                                            unknown_object_array, image_with_boxes, image_with_unknown_boxes, image)
 
         # Publish the image with all bounding boxes
         image_msg = Image()
@@ -322,6 +322,8 @@ class Detector:
 
         # Publish the unknown objects
         if len(unknown_object_array.objects) > 0:   
+            print("Have Non-Overlapping Unknown Objects")
+
             # Convert image to the ROS format
             _, buffer = cv2.imencode('.jpg', image_with_unknown_boxes)
             unknown_object_array.data = np.array(buffer).tobytes()
@@ -333,7 +335,7 @@ class Detector:
         # print('Elapsed time: {}'.format(end_time - start_time))
 
     def filter_objects(self, boxes, conf, clss, num_detected, depth, trans, rot, data_dict, data_count, detection_array, 
-                           unknown_object_array, image_with_boxes, unknown_image):
+                           unknown_object_array, image_with_boxes, unknown_image, image):
 
         # Get location of camera in map frame
         x_camera = trans[0]
@@ -458,10 +460,6 @@ class Detector:
                     unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
                     unknown_object.data = image[y1:y2, x1:x2].tobytes()
                     unknown_object_array.objects.append(unknown_object)
-
-                    # Update map with the object's position
-                    # FIXME Should subscribe to topic when object is confirmed and update there
-                    # self.map.add_to_map(x_map, y_map, object_width)
 
                     unknown_image = cv2.rectangle(unknown_image, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)-1], 2)
             
