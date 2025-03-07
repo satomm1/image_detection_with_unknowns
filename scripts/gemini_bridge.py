@@ -1,5 +1,6 @@
 import rospy
-from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray, DetectedObjectWithImage, DetectedObjectWithImageArray
+from mattbot_image_detection.msg import DetectedObjectWithImageArray
+from image_detection_with_unknowns.msg import LabeledObject, LabeledObjectArray
 
 import requests
 import shutil
@@ -27,8 +28,10 @@ Usage:
 
 QUERY = """Provide the basic name of the most prominent object in each of the bounding boxes delineated by color. 
            Provide as consise of a name as possible. For example, "dog" instead of "black dog".
-           If any of the bounding boxes don't have an object, do not include it in the response.
-           The possible colors are red, green, blue, purple, pink, orange, and yellow.
+           If any of the bounding boxes don't have an object, do not include it in the response. Also include the caution
+           level for either the object or what the object signals. The possible caution level is 'low', 'medium', and 'high'. 'low' means the object is not dangerous,
+           'medium' means we should avoid a region near the object, and 'high' means we should avoid all areas near the object.
+           The possible colors of the bounding boxes are red, green, blue, purple, pink, orange, and yellow.
         """
 
 class GeminiBridge:
@@ -39,7 +42,7 @@ class GeminiBridge:
         self.server = server
 
         # Publisher for providing names of unknown objects
-        self.labeled_pub = rospy.Publisher("/labeled_unknown_objects", DetectedObjectArray, queue_size=1)
+        self.labeled_pub = rospy.Publisher("/labeled_unknown_objects", LabeledObjectArray, queue_size=1)
 
         # Subscribe to detected unknown objects
         self.unknown_sub = rospy.Subscriber("/unknown_objects", DetectedObjectWithImageArray, self.object_callback, queue_size=1)
@@ -50,8 +53,8 @@ class GeminiBridge:
     def object_callback(self, msg):
 
         # For testing only, only process 1 image --- remove later
-        # if self.done:
-        #     return
+        if self.done:
+            return
 
         # If message is from too long ago, return
         if rospy.Time.now() - msg.header.stamp > rospy.Duration(2):
@@ -81,20 +84,26 @@ class GeminiBridge:
         # Store the results in a dictionary by color
         results = {}
         for obj in response:
-            results[obj['bounding_box_color']] = obj['object_name']
+            results[obj['bounding_box_color']] = {'object_name': obj['object_name'], 'caution_level': obj['caution_level']}
 
         # Match the objects to the results from the LLM
-        matched_object_array = DetectedObjectArray()
+        matched_object_array = LabeledObjectArray()
+        matched_object_array.header.stamp = rospy.Time.now()
         for obj in msg.objects:
             if obj.color in results:
-                matched_object = DetectedObject()
-                matched_object.class_name = results[obj.color]
+                matched_object = LabeledObject()
+                matched_object.class_name = results[obj.color]['object_name']
                 matched_object.pose = obj.pose
                 matched_object.width = obj.width
-                matched_object.x1 = obj.x1
-                matched_object.x2 = obj.x2
-                matched_object.y1 = obj.y1
-                matched_object.y2 = obj.y2
+                caution_level = results[obj.color]['caution_level']
+                if caution_level == 'low':
+                    matched_object.caution_level = 0
+                elif caution_level == 'medium':
+                    matched_object.caution_level = 1
+                elif caution_level == 'high':
+                    matched_object.caution_level = 2
+                else:
+                    matched_object.caution_level = -1
                 matched_object_array.objects.append(matched_object)
 
         # Publish the names of the new objects if any exist

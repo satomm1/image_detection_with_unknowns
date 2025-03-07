@@ -4,6 +4,7 @@ import rospy
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2
 from geometry_msgs.msg import PoseWithCovariance, Pose, Twist
 from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray, DetectedObjectWithImage, DetectedObjectWithImageArray
+from image_detection_with_unknowns.msg import LabeledObject, LabeledObjectArray
 import message_filters
 from nav_msgs.msg import OccupancyGrid
 from visualization_msgs.msg import Marker, MarkerArray
@@ -93,7 +94,7 @@ class Detector:
         self.ts.registerCallback(self.unifiedCallback)
 
         # Subscribe to the labeled unknown objects
-        self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", DetectedObjectArray, self.labeled_callback, queue_size=3)
+        self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", LabeledObjectArray, self.labeled_callback, queue_size=3)
 
     def unifiedCallback(self, rgb_data, depth_data):
 

@@ -7,12 +7,7 @@ Clone this repo with
 git clone https://github.com/satomm1/image_detection_with_unknowns.git
 ```
 
-We use [MobileCLIP](https://github.com/satomm1/ml-mobileclip), so we also need to clone this repo. To use MobileCLIP with a ROS launch file, some small modifications are made to the original MobileCLIP codebase (for details on the modifications see the subsection below). Please clone from my forked repo:
-```
-mkdir src && cd image_detection_with_unknowns/src
-git clone https://github.com/apple/ml-mobileclip.git
-```
-Then, we need to install the required packages for MobileCLIP (this assumes that PyTorch is already installed):
+We use [MobileCLIP](https://github.com/satomm1/ml-mobileclip), but this is already included in the repo. To use MobileCLIP with a ROS launch file, some small modifications are made to the original MobileCLIP codebase (for details on the modifications see the subsection below). Install the required packages for MobileCLIP (this assumes that PyTorch is already installed):
 ```
 pip3 install clip-benchmark
 pip3 install datasets
@@ -32,17 +27,22 @@ The package relies on RGB images published to the  `/camera/color/image_raw` top
 Included in this repo are YOLOv11 weights, `osod.pt`, for detecting common office building objects and unknown objects. The class number -> class name map is located in the `scripts/labels.txt` file. These can be updated with custom weights/labels, but the name of the custom files should be updated in parameters in the launch files.  
 
 ##### MobileCLIP Weights
-We use the default pretrained weight provided by MobileCLIP. Download them by navigating to the `ml-mobileclip` directory, and calling:
+We use the default pretrained weight provided by MobileCLIP. To download them, temporarily clone the MobileCLIP repo:
+```
+clone https://github.com/apple/ml-mobileclip.git
+```
+Navigate to the `ml-mobileclip` directory and call:
 ```
 source get_pretrained_models.sh
 ```
-This will download a few models to the `/ml-mobileclip/checkpoints` directory. We use the `mobileclip_s0.pt` model, so you can delete the other models. Last, we move the `checkpoints` directory to the `scripts` directory:
+This will download a few models to the `/ml-mobileclip/checkpoints` directory. We use the `mobileclip_s0.pt` model, so you can delete the other models. Move the `checkpoints` directory to the `scripts` directory:
 ```
 image_detection_with_unknowns/
 └── scripts/
     └── checkpoints/
         └── mobileclip_s0.pt
 ```
+Feel free to delete the `ml-mobileclip` repo at this point.
 
 ### Launch Files
 We include the `detect.launch` and `detect_with_dist.launch` launch files. These launch the respective detect script with the gemini bridge.

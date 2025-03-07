@@ -50,15 +50,11 @@ catkin_python_setup()
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   DetectedObject.msg
-#   DetectedObjectArray.msg
-#   DetectedObjectWithImage.msg
-#   DetectedObjectWithImageArray.msg
-#   Person.msg
-#   PersonArray.msg
-# )
+add_message_files(
+  FILES
+  LabeledObject.msg
+  LabeledObjectArray.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -171,7 +167,7 @@ catkin_install_python(PROGRAMS
   scripts/detect.py
   scripts/detect_with_dist.py
   scripts/gemini_bridge.py
-  scripts/test.py
+  # scripts/test.py
   # scripts/utils/utils.py
   # scripts/utils/__init__.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
