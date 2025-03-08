@@ -141,6 +141,17 @@ class Detector:
             if clss[i] != 0:
                 cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
+                new_object = DetectedObjectWithImage()
+                new_object.class_name = self.labels[clss[i]]
+                new_object.probability = conf[i]
+                new_object.color = "none"
+                new_object.data = image[y1:y2, x1:x2].tobytes()
+                new_object.x1 = x1
+                new_object.y1 = y1
+                new_object.x2 = x2
+                new_object.y2 = y2
+                unknown_object_array.objects.append(new_object)
+
             # If the object is unknown, first compare to CLIP, then add it to the unknown_object_array and draw on unknown image if truly unknown
             if clss[i] == 0 and len(unknown_object_array.objects) < len(GEMINI_COLORS):
                 
@@ -148,6 +159,17 @@ class Detector:
                 if clip_name != "unknown":
                     # If the object is known, draw the label on the image
                     cv2.putText(image_with_boxes, f"CLIP: {clip_name}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+
+                    new_object = DetectedObjectWithImage()
+                    new_object.class_name = clip_name
+                    new_object.probability = conf[i]
+                    new_object.color = "none"
+                    new_object.data = image[y1:y2, x1:x2].tobytes()
+                    new_object.x1 = x1
+                    new_object.y1 = y1
+                    new_object.x2 = x2
+                    new_object.y2 = y2
+                    unknown_object_array.objects.append(new_object)
                 else:
                     # CLIP didn't classify the object, so it is unknown
                     cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)

@@ -343,6 +343,7 @@ class Detector:
         _, _, theta_camera = euler_from_quaternion(rot)
         theta_camera = theta_camera
         
+        num_unknown = 0
         for i in range(num_detected):
             class_num = clss[i]
             if class_num == -1:
@@ -350,8 +351,7 @@ class Detector:
             else:
                 class_name = self.labels[class_num]
 
-            if class_name == 'person':
-                continue
+            
             class_score = conf[i]
 
             # Skip objects without a high enough confidence score
@@ -378,6 +378,15 @@ class Detector:
 
             # Skip objects with invalid depth values (0) or too far away (> 5 meters) since they are unreliable
             if estimated_depth == 0 or estimated_depth > 5:
+                new_object = DetectedObjectWithImage()
+                new_object.class_name = class_name
+                new_object.probability = class_score
+                new_object.x1 = x1
+                new_object.y1 = y1
+                new_object.x2 = x2
+                new_object.y2 = y2
+                new_object.color = "none"
+                unknown_object_array.objects.append(new_object)
                 continue
 
             # Get the object's position in the camera frame using the estimated depth
@@ -444,24 +453,39 @@ class Detector:
             # Add unknown objects to the unknown_object_array if not overlapped with the map
             if not is_overlapped and class_name == 'unknown':
 
+                # Get the part of the image within the bounding box
+                unknown_object = DetectedObjectWithImage()
+                unknown_object.class_name = class_name
+                unknown_object.probability = class_score
+                unknown_object.pose = detected_object_pose
+                unknown_object.width = object_width
+                unknown_object.x1 = x1
+                unknown_object.y1 = y1
+                unknown_object.x2 = x2
+                unknown_object.y2 = y2
                 # Limit the number of unknown objects to the number of colors available
-                if len(unknown_object_array.objects) < len(GEMINI_COLORS):
+                if num_unknown < len(GEMINI_COLORS):
+                    unknown_object.color = GEMINI_COLORS[num_unknown]
 
-                    # Get the part of the image within the bounding box
-                    unknown_object = DetectedObjectWithImage()
-                    unknown_object.class_name = class_name
-                    unknown_object.probability = class_score
-                    unknown_object.pose = detected_object_pose
-                    unknown_object.width = object_width
-                    unknown_object.x1 = x1
-                    unknown_object.y1 = y1
-                    unknown_object.x2 = x2
-                    unknown_object.y2 = y2
-                    unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
-                    unknown_object.data = image[y1:y2, x1:x2].tobytes()
-                    unknown_object_array.objects.append(unknown_object)
+                unknown_object.data = image[y1:y2, x1:x2].tobytes()
+                unknown_object_array.objects.append(unknown_object)
 
-                    unknown_image = cv2.rectangle(unknown_image, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)-1], 2)
+                num_unknown += 1
+                # unknown_image = cv2.rectangle(unknown_image, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)-1], 2)
+
+            else:
+                # Add the object to the unknown_object_array
+                new_object = DetectedObjectWithImage()
+                new_object.class_name = class_name
+                new_object.probability = class_score
+                new_object.pose = detected_object_pose
+                new_object.width = object_width
+                new_object.x1 = x1
+                new_object.y1 = y1
+                new_object.x2 = x2
+                new_object.y2 = y2
+                new_object.color = "none"
+                unknown_object_array.objects.append(new_object)
             
         return data_dict, data_count, detection_array, unknown_object_array, image_with_boxes, unknown_image
 

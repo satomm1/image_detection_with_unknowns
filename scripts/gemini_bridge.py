@@ -73,6 +73,11 @@ class GeminiBridge:
 
         # Draw the bounding boxes on the image
         for i, obj in enumerate(msg.objects):
+
+            if obj.class_name != "unknown":
+                # Not an unknown object, skip
+                continue
+
             if obj.color not in GEMINI_COLORS:
                 continue
             x1 = int(obj.x1)
@@ -122,6 +127,19 @@ class GeminiBridge:
                     matched_object.caution_level = 2
                 else:
                     matched_object.caution_level = -1
+                matched_object.x1 = obj.x1
+                matched_object.x2 = obj.x2
+                matched_object.y1 = obj.y1
+                matched_object.y2 = obj.y2
+
+                matched_object_array.objects.append(matched_object)
+
+            elif obj.color == "none":
+                matched_object = LabeledObject()
+                matched_object.class_name = obj.class_name
+                matched_object.pose = obj.pose
+                matched_object.width = obj.width
+                matched_object.caution_level = -1
                 matched_object.x1 = obj.x1
                 matched_object.x2 = obj.x2
                 matched_object.y1 = obj.y1
