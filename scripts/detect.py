@@ -156,7 +156,12 @@ class Detector:
                     unknown_object.class_name = "unknown"
                     unknown_object.probability = conf[i]
                     unknown_object.color = GEMINI_COLORS[len(unknown_object_array.objects)]
-                    cv2.rectangle(image_with_unknown_boxes, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)], 2)
+                    unknown_object.data = image[y1:y2, x1:x2].tobytes()
+                    unknown_object.x1 = x1
+                    unknown_object.y1 = y1
+                    unknown_object.x2 = x2
+                    unknown_object.y2 = y2
+                    # cv2.rectangle(image_with_unknown_boxes, (x1, y1), (x2, y2), COLOR_CODES[len(unknown_object_array.objects)], 2)
                     unknown_object_array.objects.append(unknown_object)
 
         # Publish the image with all bounding boxes

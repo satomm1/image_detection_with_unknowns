@@ -167,7 +167,7 @@ catkin_install_python(PROGRAMS
   scripts/detect.py
   scripts/detect_with_dist.py
   scripts/gemini_bridge.py
-  # scripts/test.py
+  scripts/image_saver.py
   # scripts/utils/utils.py
   # scripts/utils/__init__.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

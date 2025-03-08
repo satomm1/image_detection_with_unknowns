@@ -34,6 +34,9 @@ QUERY = """Provide the basic name of the most prominent object in each of the bo
            The possible colors of the bounding boxes are red, green, blue, purple, pink, orange, and yellow.
         """
 
+GEMINI_COLORS = ['red', 'green', 'blue', 'purple', 'pink', 'orange', 'yellow']
+COLOR_CODES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 0, 128), (255, 192, 203), (255, 165, 0), (255, 255, 0)]
+
 class GeminiBridge:
     
     def __init__(self, server='http://127.0.0.1:5000/gemini'):
@@ -65,8 +68,22 @@ class GeminiBridge:
         np_arr = np.frombuffer(msg.data, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        img_with_boxes = img.copy()
+
+        # Draw the bounding boxes on the image
+        for i, obj in enumerate(msg.objects):
+            if obj.color not in GEMINI_COLORS:
+                continue
+            x1 = int(obj.x1)
+            y1 = int(obj.y1)
+            x2 = int(obj.x2)
+            y2 = int(obj.y2)
+            color = COLOR_CODES[GEMINI_COLORS.index(obj.color)]
+            cv2.rectangle(img_with_boxes, (x1, y1), (x2, y2), color, 2)
+
         # Now save to the file
-        cv2.imwrite("unknown_object.jpg", img)
+        cv2.imwrite("unknown_object.jpg", img_with_boxes)
         shutil.copyfile("unknown_object.jpg", f'../../../../../gemini_code/unknown_object.jpg')
 
         # Send the image to the LLM --- Have to send via a POST request since this version of Python doesn't 
@@ -89,6 +106,7 @@ class GeminiBridge:
         # Match the objects to the results from the LLM
         matched_object_array = LabeledObjectArray()
         matched_object_array.header.stamp = rospy.Time.now()
+        matched_object_array.data = msg.data
         for obj in msg.objects:
             if obj.color in results:
                 matched_object = LabeledObject()
@@ -104,6 +122,11 @@ class GeminiBridge:
                     matched_object.caution_level = 2
                 else:
                     matched_object.caution_level = -1
+                matched_object.x1 = obj.x1
+                matched_object.x2 = obj.x2
+                matched_object.y1 = obj.y1
+                matched_object.y2 = obj.y2
+
                 matched_object_array.objects.append(matched_object)
 
         # Publish the names of the new objects if any exist
