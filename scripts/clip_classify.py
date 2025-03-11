@@ -124,8 +124,11 @@ class ClipClassify:
 
 
     def update_text_features(self):
+        # Put "a " in front of each object name
+        object_names_with_prefix = ["a " + name for name in self.object_names]
+
         # Get the text
-        self.text = self.tokenizer(self.object_names).to(self.device)
+        self.text = self.tokenizer(object_names_with_prefix).to(self.device)
 
         # Get the text features
         with torch.no_grad(), torch.cuda.amp.autocast():

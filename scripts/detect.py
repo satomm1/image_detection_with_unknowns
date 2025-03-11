@@ -82,6 +82,7 @@ class Detector:
         self.tall = False  # True if camera mounted on tall robot (i.e. upside down)
 
         # Create the publisher that will show image with bounding boxes
+        self.first_time = True
         self.boxes_publisher = rospy.Publisher('/camera/color/image_with_boxes', Image, queue_size=1)
 
         # Create the publisher that sends unknown objects
@@ -92,6 +93,7 @@ class Detector:
         self.depth_sub = message_filters.Subscriber('/camera/depth/image_raw', Image)
         self.ts = message_filters.ApproximateTimeSynchronizer([self.rbg_sub, self.depth_sub], 1, 0.1)
         self.ts.registerCallback(self.unifiedCallback)
+        # self.saved_image = False
 
         # Subscribe to the labeled unknown objects
         self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", LabeledObjectArray, self.labeled_callback, queue_size=3)
@@ -106,6 +108,12 @@ class Detector:
         if self.tall:
             # Rotate image 180 degrees if mounted on tall robot
             image = cv2.rotate(image, cv2.ROTATE_180)
+
+        # if not self.saved_image:
+        #     # Save the first image as a reference
+        #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        #     cv2.imwrite('/workspace/catkin_ws/src/image_detection_with_unknowns/scripts/reference_image.jpg', image)
+        #     self.saved_image = True
 
         # Perform object detection using YOLO
         results = self.model.predict(image, device=0, conf=0.20, agnostic_nms=True, iou=IOU_THRESHOLD, verbose=False)
@@ -139,7 +147,11 @@ class Detector:
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
             cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), COLORS[clss[i]], 2)
             if clss[i] != 0:
-                cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+                if y1 - 10 > 0:
+                    cv2.putText(image_with_boxes, f"{self.labels[clss[i]]}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+                else:
+                    cv2.putText(image_with_boxes, f"{self.labels[clss[i]]}", (x1, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+                    # cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
                 new_object = DetectedObjectWithImage()
                 new_object.class_name = self.labels[clss[i]]
@@ -172,7 +184,7 @@ class Detector:
                     unknown_object_array.objects.append(new_object)
                 else:
                     # CLIP didn't classify the object, so it is unknown
-                    cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
+                    cv2.putText(image_with_boxes, f"{self.labels[clss[i]]}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
 
                     unknown_object = DetectedObjectWithImage()
                     unknown_object.class_name = "unknown"
@@ -207,6 +219,13 @@ class Detector:
 
             self.unknown_pub.publish(unknown_object_array)  # Publish the unknown objects
 
+            if self.first_time:
+                # Save image_with_boxes as labeled_image.jpg
+                # convert image_with_boxes to RGB
+                image_with_boxes = cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB)
+                cv2.imwrite('/workspace/catkin_ws/src/image_detection_with_unknowns/scripts/labeled_image.jpg', image_with_boxes)
+                self.first_time = False
+
         end_time = time.time()
         # print('Detection time: {}'.format(detect_time - start_time))
         # print('Elapsed time: {}'.format(end_time - start_time))
@@ -225,6 +244,8 @@ class Detector:
 
     
     def clip_classify(self, img):
+
+        
         
         if len(self.object_names) < 2 or self.text_features is None:
             # We require at least 2 clip names to classify
@@ -234,11 +255,15 @@ class Detector:
         img = PILImage.fromarray(img)
         img = self.clip_preprocess(img).unsqueeze(0)
 
+        # start_time = time.time()
         # Encode the image
         with torch.no_grad(), torch.cuda.amp.autocast():
             img = img.to(self.device, dtype=torch.float16)
             img_features = self.clip_model.encode_image(img)
             img_features /= img_features.norm(dim=-1, keepdim=True)
+
+            # end_time = time.time()
+            # print("CLIP classification time: {}".format(end_time - start_time))
 
             # Calculate the similarity scores between the image and text features
             text_scores = (100.0 * img_features @ self.text_features.T)
@@ -247,6 +272,8 @@ class Detector:
         # Get ratio of top score to second score
         text_scores = text_scores.cpu().numpy()[0]
         ratio = text_scores[ranked_scores[0]] / text_scores[ranked_scores[1]]
+
+        
 
         if ratio > 1.4:
             return self.object_names[ranked_scores[0]]

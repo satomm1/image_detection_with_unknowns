@@ -31,6 +31,7 @@ QUERY = """Provide the basic name of the most prominent object in each of the bo
            If any of the bounding boxes don't have an object, do not include it in the response. Also include the caution
            level for either the object or what the object signals. The possible caution level is 'low', 'medium', and 'high'. 'low' means the object is not dangerous,
            'medium' means we should avoid a region near the object, and 'high' means we should avoid all areas near the object.
+           Also set is_static to True if the object is a static object or False if the object can move by itself.
            The possible colors of the bounding boxes are red, green, blue, purple, pink, orange, and yellow.
         """
 
