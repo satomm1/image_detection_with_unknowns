@@ -35,13 +35,13 @@ if __name__ == "__main__":
     img = img.crop((x1, y1, x2, y2))
 
     # save image to file
-    img.save("cropped_cone.png")
+    # img.save("cropped_cone.png")
     img.save("cropped_bottle.png")
 
     # Preprocess the image
     image = preprocess(img).unsqueeze(0)
     
-    text = tokenizer(["a filing cabinet", "a cone", "a helmet", "a printer", "a stapler"])
+    text = tokenizer(["a filing cabinet", "a cone", "a computer tower", "a recycle bin", "a helmet"])
     text = text.to(device)
 
     with torch.no_grad(), torch.cuda.amp.autocast():
