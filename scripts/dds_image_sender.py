@@ -81,6 +81,16 @@ class UnknownObjectSaver:
             # No objects detected, do nothing
             return
 
+        # Make sure a cone is detected
+        found_cone = False
+        for obj in msg.objects:
+            if obj.class_name == "cone":
+                found_cone = True
+                break
+
+        if not found_cone:
+            return
+
         img_message_str = message_converter.convert_ros_message_to_dictionary(msg)
         message = DataMessage(message_type='unknown_image', sending_agent=self.agent_id, timestamp=rospy.Time.now().to_nsec(), data='')
         message.data = json.dumps(img_message_str) 

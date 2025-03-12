@@ -78,8 +78,8 @@ class Detector:
         self.text = None
         self.text_features = None
 
-        # FIXME: Load from a parameter
-        self.tall = False  # True if camera mounted on tall robot (i.e. upside down)
+        # Load from a parameter
+        self.tall = rospy.get_param('~tall', False)  # True if camera mounted on tall robot (i.e. upside down)
 
         # Create the publisher that will show image with bounding boxes
         self.first_time = True
@@ -97,6 +97,8 @@ class Detector:
 
         # Subscribe to the labeled unknown objects
         self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", LabeledObjectArray, self.labeled_callback, queue_size=3)
+
+        print("Finished setup")
 
     def unifiedCallback(self, rgb_data, depth_data):
 

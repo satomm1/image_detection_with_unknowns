@@ -135,13 +135,16 @@ class Detector:
         self.text = None
         self.text_features = None
 
-        # FIXME: Load from a parameter
-        self.tall = False
+        self.tall = rospy.get_param('~tall', False)  # True if camera mounted on tall robot (i.e. upside down)
 
         # These keep track of whether the robot is turning or not, 
         # The depth images produced when turning are not reliable, so we need to ignore them
         self.is_turning = False
         self.time_since_turning = 0
+
+        # Keep track if static so don't call LLM repeatedly
+        self.is_static = False
+        self.queried_while_static = False
 
         # Create the publisher that will show image with bounding boxes
         self.boxes_publisher = rospy.Publisher('/camera/color/image_with_boxes', Image, queue_size=1)
@@ -328,7 +331,12 @@ class Detector:
             _, buffer = cv2.imencode('.jpg', image_with_unknown_boxes)
             unknown_object_array.data = np.array(buffer).tobytes()
 
-            self.unknown_object_publisher.publish(unknown_object_array)  # Publish the unknown objects
+            if not self.is_static or not self.queried_while_static:
+                # Only publish if not static
+                self.unknown_object_publisher.publish(unknown_object_array)  # Publish the unknown objects
+
+                if self.is_static:
+                    self.queried_while_static = True
 
         end_time = time.time()
         # print('Detection time: {}'.format(detect_time - start_time))
@@ -596,6 +604,12 @@ class Detector:
             self.is_turning = True
         else:
             self.is_turning = False
+
+        if msg.linear.x == 0 and msg.angular.z == 0:
+            self.is_static = True
+        else:
+            self.is_static = False
+            self.queried_while_static = False
 
 
     def run(self):
