@@ -28,4 +28,7 @@
     <param name="save_dir" value="$(arg save_dir)" />
   </node> -->
 
+  <node name="image_sender" pkg="image_detection_with_unknowns" type="dds_image_sender.py" output="screen">
+  </node> 
+
 </launch>
