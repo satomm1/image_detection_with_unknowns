@@ -48,7 +48,7 @@ class UnknownObjectSaver:
         self.reliable_qos = Qos(
             Policy.Reliability.Reliable(max_blocking_time=duration(milliseconds=100)),
             Policy.Durability.TransientLocal,
-            Policy.History.KeepLast(depth=10)
+            Policy.History.KeepLast(depth=1)
         )
 
         self.best_effort_qos = Qos(
