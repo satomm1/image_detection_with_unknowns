@@ -2,6 +2,7 @@ import rospy
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2
 from geometry_msgs.msg import PoseWithCovariance, Pose, Twist
 from mattbot_image_detection.msg import DetectedObject, DetectedObjectArray, DetectedObjectWithImage, DetectedObjectWithImageArray
+from image_detection_with_unknowns.msg import LabeledObject, LabeledObjectArray
 import message_filters
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import Point
@@ -145,6 +146,7 @@ class Detector:
         # Keep track if static so don't call LLM repeatedly
         self.is_static = False
         self.queried_while_static = False
+        self.time_since_static = 0
 
         # Create the publisher that will show image with bounding boxes
         self.boxes_publisher = rospy.Publisher('/camera/color/image_with_boxes', Image, queue_size=1)
@@ -187,7 +189,7 @@ class Detector:
         self.ts.registerCallback(self.unifiedCallback)
 
         # Subscribe to the labeled unknown objects
-        self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", DetectedObjectArray, self.labeled_callback, queue_size=3)
+        self.labeled_sub = rospy.Subscriber("/labeled_unknown_objects", LabeledObjectArray, self.labeled_callback, queue_size=3)
 
     def unifiedCallback(self, rgb_data, depth_data):
         """
@@ -248,6 +250,7 @@ class Detector:
 
         image_with_boxes = image.copy()  # Image to show all bounding boxes
         image_with_unknown_boxes = image.copy()  # Image to show only unknown bounding boxes
+        clip_names = {}
         for i in range(num_detected):
 
             # Make sure the confidence is above the threshold
@@ -270,6 +273,7 @@ class Detector:
                     cv2.putText(image_with_boxes, f"CLIP: {clip_name}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
                     # Change clss[i] to not be 0 so that it is considered a known object
                     clss[i] = -1
+                    clip_names[i] = clip_name
                 else: 
                     # CLIP didn't classify the object, so it is unknown
                     cv2.putText(image_with_boxes, f"{self.labels[clss[i]]} {conf[i]:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, COLORS[clss[i]], 2)
@@ -307,7 +311,7 @@ class Detector:
             image_with_boxes,
             image_with_unknown_boxes) = self.filter_objects(boxes, conf, clss, num_detected, depth, trans, rot, 
                                             data_dict, data_count, detection_array, 
-                                            unknown_object_array, image_with_boxes, image_with_unknown_boxes, image)
+                                            unknown_object_array, image_with_boxes, image_with_unknown_boxes, image, clip_names)
 
         # Publish the image with all bounding boxes
         image_msg = Image()
@@ -325,25 +329,29 @@ class Detector:
 
         # Publish the unknown objects
         if len(unknown_object_array.objects) > 0:   
-            print("Have Non-Overlapping Unknown Objects")
+            # print("Have Non-Overlapping Unknown Objects")
 
             # Convert image to the ROS format
             _, buffer = cv2.imencode('.jpg', image_with_unknown_boxes)
             unknown_object_array.data = np.array(buffer).tobytes()
 
-            if not self.is_static or not self.queried_while_static:
+            # print(time.time() - self.time_since_static)
+            if not self.is_static or not self.queried_while_static or time.time() - self.time_since_static > 10:
                 # Only publish if not static
                 self.unknown_object_publisher.publish(unknown_object_array)  # Publish the unknown objects
 
+                print("Published unknown objects")
+
                 if self.is_static:
                     self.queried_while_static = True
+                    self.time_since_static = time.time()
 
         end_time = time.time()
         # print('Detection time: {}'.format(detect_time - start_time))
         # print('Elapsed time: {}'.format(end_time - start_time))
 
     def filter_objects(self, boxes, conf, clss, num_detected, depth, trans, rot, data_dict, data_count, detection_array, 
-                           unknown_object_array, image_with_boxes, unknown_image, image):
+                           unknown_object_array, image_with_boxes, unknown_image, image, clip_names):
 
         # Get location of camera in map frame
         x_camera = trans[0]
@@ -355,7 +363,7 @@ class Detector:
         for i in range(num_detected):
             class_num = clss[i]
             if class_num == -1:
-                class_name = 'clip detected'
+                class_name = clip_names[i]
             else:
                 class_name = self.labels[class_num]
 
@@ -531,14 +539,14 @@ class Detector:
         # Update the object names and text features
         names_changed = False
         for obj in msg.objects:
-            if obj.class_name not in self.object_names:
+            if obj.class_name not in self.object_names and len(self.object_names < 10):
                 self.object_names.append(obj.class_name)
                 names_changed = True
 
             x_map = obj.pose.position.x
             y_map = obj.pose.position.y
             object_width = obj.width
-            self.map.add_to_map(x_map, y_map, object_width)
+            # self.map.add_to_map(x_map, y_map, object_width)
 
         if names_changed:
             self.update_text_features()
@@ -597,7 +605,7 @@ class Detector:
         Args:
             msg (geometry_msgs.msg.Twist): The velocity command message containing linear and angular velocities.
         """
-        if np.abs(msg.angular.z) > 0.07:
+        if np.abs(msg.angular.z) > 0.15:
             self.is_turning = True
             self.time_since_turning = time.time()
         elif time.time() - self.time_since_turning < 0.25:
@@ -606,7 +614,11 @@ class Detector:
             self.is_turning = False
 
         if msg.linear.x == 0 and msg.angular.z == 0:
+            if not self.is_static:
+                self.time_since_static = time.time()
+            
             self.is_static = True
+
         else:
             self.is_static = False
             self.queried_while_static = False

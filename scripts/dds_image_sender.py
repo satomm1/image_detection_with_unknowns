@@ -46,7 +46,7 @@ class UnknownObjectSaver:
         
         # Reliable qos
         self.reliable_qos = Qos(
-            Policy.Reliability.Reliable(max_blocking_time=duration(milliseconds=10)),
+            Policy.Reliability.Reliable(max_blocking_time=duration(milliseconds=100)),
             Policy.Durability.TransientLocal,
             Policy.History.KeepLast(depth=10)
         )
@@ -74,7 +74,7 @@ class UnknownObjectSaver:
         self.writer = DataWriter(self.publisher, self.topic, qos=self.reliable_qos)
 
         # Create a subscriber to the labeled_unknown_objects topic
-        self.labeled_image_subscriber = rospy.Subscriber("/labeled_unknown_objects", LabeledObjectArray, self.image_callback, queue_size=3)
+        self.labeled_image_subscriber = rospy.Subscriber("/labeled_unknown_objects", LabeledObjectArray, self.image_callback, queue_size=1)
 
     def image_callback(self, msg):
         if len(msg.objects) == 0:
@@ -84,7 +84,7 @@ class UnknownObjectSaver:
         # Make sure a cone is detected
         found_cone = False
         for obj in msg.objects:
-            if obj.class_name == "cone":
+            if "cone" in obj.class_name:
                 found_cone = True
                 break
 

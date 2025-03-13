@@ -57,8 +57,8 @@ class GeminiBridge:
     def object_callback(self, msg):
 
         # For testing only, only process 1 image --- remove later
-        if self.done:
-            return
+        # if self.done:
+        #     return
 
         # If message is from too long ago, return
         if rospy.Time.now() - msg.header.stamp > rospy.Duration(2):
@@ -72,6 +72,7 @@ class GeminiBridge:
 
         img_with_boxes = img.copy()
 
+        num_unknowns = 0
         # Draw the bounding boxes on the image
         for i, obj in enumerate(msg.objects):
 
@@ -79,6 +80,7 @@ class GeminiBridge:
                 # Not an unknown object, skip
                 continue
 
+            num_unknowns += 1
             if obj.color not in GEMINI_COLORS:
                 continue
             x1 = int(obj.x1)
@@ -88,26 +90,29 @@ class GeminiBridge:
             color = COLOR_CODES[GEMINI_COLORS.index(obj.color)]
             cv2.rectangle(img_with_boxes, (x1, y1), (x2, y2), color, 2)
 
-        # Now save to the file
-        cv2.imwrite("unknown_object.jpg", img_with_boxes)
-        shutil.copyfile("unknown_object.jpg", f'../../../../../gemini_code/unknown_object.jpg')
+        if num_unknowns > 0:
+            # Now save to the file
+            cv2.imwrite("unknown_object.jpg", img_with_boxes)
+            shutil.copyfile("unknown_object.jpg", f'../../../../../gemini_code/unknown_object.jpg')
 
-        # Send the image to the LLM --- Have to send via a POST request since this version of Python doesn't 
-        # support the LLM API
-        data = {'query': QUERY, 'query_type': 'image', 'image_name': "unknown_object.jpg"}
+            # Send the image to the LLM --- Have to send via a POST request since this version of Python doesn't 
+            # support the LLM API
+            data = {'query': QUERY, 'query_type': 'image', 'image_name': "unknown_object.jpg"}
 
-        try:
-            response = requests.post(self.server, json=data)
-        except:
-            print("Error sending image to the LLM")
-            return
-        response = response.json()['response']
-        response = json.loads(response)
+            try:
+                response = requests.post(self.server, json=data)
+            except:
+                print("Error sending image to the LLM")
+                return
+            response = response.json()['response']
+            response = json.loads(response)
 
-        # Store the results in a dictionary by color
-        results = {}
-        for obj in response:
-            results[obj['bounding_box_color']] = {'object_name': obj['object_name'], 'caution_level': obj['caution_level']}
+            # Store the results in a dictionary by color
+            results = {}
+            for obj in response:
+                results[obj['bounding_box_color']] = {'object_name': obj['object_name'], 'caution_level': obj['caution_level']}
+        else: 
+            results = {}
 
         # Match the objects to the results from the LLM
         matched_object_array = LabeledObjectArray()
