@@ -167,7 +167,7 @@ class Detector:
         # Get the map and create a StochOccupancyGrid2D object
         # self.map keeps track of the original map plus objects that have been detected
         # so that we don't need to query the LLM multiple times for the same object
-        self.map_msg = rospy.wait_for_message("/navigation_map", OccupancyGrid)
+        self.map_msg = rospy.wait_for_message("/map", OccupancyGrid)
         self.map = StochOccupancyGrid2D(self.map_msg.info.resolution, 
                                              self.map_msg.info.width, 
                                             self.map_msg.info.height,
