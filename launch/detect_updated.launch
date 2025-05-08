@@ -12,7 +12,7 @@
   <arg name="save_dir" default="$(find image_detection_with_unknowns)/images/"/>
 
   <!-- Launch the object detection script -->
-  <node name="image_detector_node" pkg="image_detection_with_unknowns" type="detect.py" output="screen">
+  <node name="image_detector_node" pkg="image_detection_with_unknowns" type="detect_with_dist.py" output="screen">
     <param name="tall" value="$(arg tall)" />
     <param name="weights_file" value="$(arg weights_file)" />
     <param name="labels_file" value="$(arg labels_file)" />

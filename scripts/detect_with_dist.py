@@ -24,7 +24,7 @@ UNKNOWN_OBJECT_THRESHOLD = 0.25
 
 IOU_THRESHOLD = 0.1  # Set the IoU threshold for NMS
 COLORS = [(255,50,50), (207,49,225), (114,15,191), (22,0,222), (0,177,122), (34,236,169),
-          (34,236,81), (203,203,47), (205,90,23), (102,68,16), (168,215,141)]
+          (34,236,81), (203,203,47), (205,90,23), (102,68,16), (168,215,141), (185,167,215)]
 
 GEMINI_COLORS = ['red', 'green', 'blue', 'purple', 'pink', 'orange', 'yellow']
 COLOR_CODES = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 0, 128), (255, 192, 203), (255, 165, 0), (255, 255, 0)]
@@ -132,7 +132,7 @@ class Detector:
         self.tokenizer = mobileclip.get_tokenizer('mobileclip_s0', root_dir=root_dir)
 
         # Initialize variables for storing object names and text features for the CLIP model
-        self.object_names = []
+        self.object_names = ["cone"]
         self.text = None
         self.text_features = None
 
@@ -539,7 +539,7 @@ class Detector:
         # Update the object names and text features
         names_changed = False
         for obj in msg.objects:
-            if obj.class_name not in self.object_names and len(self.object_names < 10):
+            if obj.class_name not in self.object_names and len(self.object_names) < 10:
                 self.object_names.append(obj.class_name)
                 names_changed = True
 
